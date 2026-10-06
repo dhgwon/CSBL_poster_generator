@@ -83,10 +83,15 @@ Order of work:
    scheme of the study" and often a worked example; `fk.flow` and
    `fk.canvas`/`fk.box`/`fk.arrow` exist for this. A figure you draw to fit the
    argument beats a screenshot of something adjacent to it.
-3. **Build and read the console table.** `poster_lib` prints content vs
+3. **Choose the column count from the canvas.** `("MID", left, right)` for a
+   tall portrait poster, `("MID", left, middle, right)` for a landscape one —
+   a two-column body on a 102 cm-wide canvas gives lines nobody reads.
+4. **Build and read the console table.** `poster_lib` prints content vs
    available height for every band. `*** OVERFLOW ***` must be fixed before
-   export.
-4. **Export, then actually look at it.** `scripts/export.sh poster_v1.pptx
+   export, and `<- under-filled` means a column is padded with air — enlarge
+   the figures or widen the grid rather than shipping it. Expect two or three
+   passes.
+5. **Export, then actually look at it.** `scripts/export.sh poster_v1.pptx
    [1080 1920]`. Render the PDF to PNG and open it. Measured heights can all be
    correct while a hand-drawn box inside a figure clips its own text — only
    looking catches that.

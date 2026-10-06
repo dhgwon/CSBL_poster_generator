@@ -97,8 +97,8 @@ class Poster:
         self.HEAD_SZ = head_pt or Pt(round(20 * s, 1))
 
         self.MARGIN, self.GUTTER = int(margin_cm * CM), int(gutter_cm * CM)
-        self.COL_W = (self.W - 2 * self.MARGIN - self.GUTTER) // 2
         self.FULL_W = self.W - 2 * self.MARGIN
+        self.COL_W = (self.FULL_W - self.GUTTER) // 2
         self.COL_X = {"L": self.MARGIN, "R": self.MARGIN + self.COL_W + self.GUTTER,
                       "F": self.MARGIN}
         self.COL_WIDTH = {"L": self.COL_W, "R": self.COL_W, "F": self.FULL_W}
@@ -106,13 +106,21 @@ class Poster:
         self.BAR_H1, self.BAR_H2 = int(1.45 * CM * s), int(2.30 * CM * s)
         self.GAP_BAR, self.GAP_FIG = int(0.32 * CM), int(0.40 * CM)
         self.GAP_MIN, self.BAND_GAP = int(0.95 * CM), int(0.90 * CM)
-        self.HEADER_H = int((header_cm or 9.4 * s) * CM)
+        # The header scales with width, but on a short landscape canvas that
+        # would eat a third of the page, so cap it at a sixth of the height.
+        self.HEADER_H = int((header_cm or min(9.4 * s, 0.16 * h_cm)) * CM)
         self.BOT_PAD = int(1.3 * CM)
 
         self.prs = Presentation()
         self.prs.slide_width, self.prs.slide_height = self.W, self.H
         self.slide = self.prs.slides.add_slide(self.prs.slide_layouts[6])
         self._fc = {}
+
+    def columns(self, n):
+        """Geometry for n equal columns across the content width. A landscape
+        canvas usually wants 3; a tall portrait one 2."""
+        w = (self.FULL_W - self.GUTTER * (n - 1)) // n
+        return [(self.MARGIN + i * (w + self.GUTTER), w) for i in range(n)]
 
     # ------------------------------------------------------------- text metrics
     def _font(self, pt, bold):
@@ -216,7 +224,10 @@ class Poster:
     def render(self, col, blocks, y0, y1, label=""):
         """Draw `blocks` into column `col` between y0 and y1, distributing the
         leftover height into the gaps that precede each section bar."""
-        cw, cx = self.COL_WIDTH[col], self.COL_X[col]
+        if isinstance(col, tuple):
+            cx, cw = col
+        else:
+            cw, cx = self.COL_WIDTH[col], self.COL_X[col]
         heights, gaps = zip(*[self.measure(b, cw) for b in blocks])
         starts = [i for i, b in enumerate(blocks)
                   if b["k"] == "bar" or (b["k"] == "head" and b.get("sec", True))]
@@ -236,7 +247,7 @@ class Poster:
             note = "   *** OVERFLOW — shrink a figure or move a block ***"
         elif avail and slack > 0.15 * avail:
             note = "   <- under-filled: enlarge the figures or add content"
-        print(f"  [{label or col:12s}] content {rigid/CM:6.1f} cm | avail {avail/CM:6.1f} cm"
+        print(f"  [{(label or str(col)):12s}] content {rigid/CM:6.1f} cm | avail {avail/CM:6.1f} cm"
               f" | slack {slack/CM:6.1f} cm" + note)
 
         y = y0
@@ -293,6 +304,7 @@ class Poster:
     # ----------------------------------------------------------------- header
     def header(self, title, authors, affils, logo=None, qr=None, title_pt=None):
         s = self.W / (57.4 * CM)
+        s_in = min(s, self.HEADER_H / (9.4 * CM))      # fits the actual band
         hdr = self.slide.shapes.add_shape(
             MSO_SHAPE.ROUNDED_RECTANGLE, Emu(int(0.42 * CM)), Emu(int(0.32 * CM)),
             Emu(self.W - int(0.84 * CM)), Emu(self.HEADER_H - int(0.64 * CM)))
@@ -301,7 +313,7 @@ class Poster:
         hdr.line.color.rgb = self.C["edge"]; hdr.line.width = Pt(0.75)
         hdr.shadow.inherit = False
 
-        d = int(6.4 * CM * s)
+        d = int(6.4 * CM * s_in)
         if logo:
             circ = self.slide.shapes.add_shape(MSO_SHAPE.OVAL, Emu(int(1.0 * CM)),
                                                Emu(int(0.95 * CM)), Emu(d), Emu(d))
@@ -316,19 +328,24 @@ class Poster:
                                           Emu(int(0.95 * CM)), Emu(d), Emu(d))
 
         tpt = title_pt or Pt(round(34 * s, 1))
-        self.textbox(0, int(1.15 * CM * s), self.W, title, size=tpt, bold=True,
+        self.textbox(0, int(1.15 * CM * s_in), self.W, title, size=tpt, bold=True,
                      color=self.C["white"], align=PP_ALIGN.CENTER)
-        y = int(1.15 * CM * s) + self.txt_h(title, self.W, tpt, bold=True) + int(0.25 * CM)
+        y = int(1.15 * CM * s_in) + self.txt_h(title, self.W, tpt, bold=True) + int(0.25 * CM)
         self.textbox(0, y, self.W, [authors], size=Pt(round(19 * s, 1)), bold=True,
                      color=self.C["white"], align=PP_ALIGN.CENTER)
-        y += int(1.2 * CM * s)
+        y += int(1.2 * CM * s_in)
         self.textbox(0, y, self.W, affils, size=Pt(round(14 * s, 1)), bold=True,
                      color=self.C["white"], align=PP_ALIGN.CENTER)
 
     # ---------------------------------------------------------------- compose
     def compose(self, bands):
-        """bands: list of ("F", blocks) and at most one ("MID", left, right).
-        Full-width bands take their natural height; MID absorbs the remainder."""
+        """bands: a list of ("F", blocks[, label]) full-width bands and at most
+        one ("MID", col_blocks, col_blocks, ...) multi-column region.
+
+        MID takes as many column block-lists as you give it — two for a tall
+        portrait poster, three for a landscape one, where a two-column body
+        would leave the lines far too long to read.  Full-width bands take
+        their natural measured height and MID absorbs everything left over."""
         top = self.HEADER_H + int(0.9 * CM)
         bot = self.H - self.BOT_PAD
         fixed = sum(self.band_h(b[1], self.FULL_W) for b in bands if b[0] == "F")
@@ -345,8 +362,10 @@ class Poster:
                 self.render("F", band[1], y, y + h, band[2] if len(band) > 2 else "")
                 y += h
             else:
-                self.render("L", band[1], y, y + mid_h, "mid-L")
-                self.render("R", band[2], y, y + mid_h, "mid-R")
+                cols = band[1:]
+                geom = self.columns(len(cols))
+                for j, (blocks, g) in enumerate(zip(cols, geom)):
+                    self.render(g, blocks, y, y + mid_h, f"mid-{j + 1}")
                 y += mid_h
             y += self.BAND_GAP
         return self
